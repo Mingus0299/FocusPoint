@@ -1,2 +1,2 @@
 # FocusPoint
-McHacks13 Holoray challenge
+McHacks13
