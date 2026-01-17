@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+motor
+pydantic
+numpy
+opencv-python-headless
+httpx
+python-dotenv
