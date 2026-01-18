@@ -6,3 +6,4 @@ numpy
 opencv-python-headless
 httpx
 python-dotenv
+python-multipart
