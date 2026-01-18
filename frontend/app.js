@@ -606,6 +606,7 @@ async function startTracking(){
   annotationId = annotationData.annotation_id;
 
   tracking = true;
+  video.play().catch(()=>{});
   startTrackBtn.textContent = 'Stop Tracking';
 
   mode = 'view';
