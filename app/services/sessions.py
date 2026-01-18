@@ -10,7 +10,7 @@ from app.config import settings
 from app.models import TrackUpdate
 from app.services.gumloop import send_event
 from app.tracking.geometry import apply_affine, apply_translation
-from app.tracking.tracker import HybridTracker
+from app.tracking_v2.tracker_lk import LKTracker
 from app.video import VideoSource
 from app.ws import ConnectionManager
 
@@ -29,7 +29,7 @@ class SessionState:
     video_path: str
     fps_target: float
     video: VideoSource
-    tracker: HybridTracker
+    tracker: LKTracker
     annotation_id: str | None = None
     annotation_points: list[tuple[float, float]] | None = None
     pending_annotation: PendingAnnotation | None = None
@@ -154,7 +154,7 @@ class SessionRegistry:
     async def create_session(self, video_path: str, fps_target: float) -> SessionState:
         session_id = str(uuid.uuid4())
         video = VideoSource(video_path)
-        tracker = HybridTracker()
+        tracker = LKTracker()
         state = SessionState(
             session_id=session_id,
             video_path=video_path,
