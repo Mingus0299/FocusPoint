@@ -266,3 +266,59 @@ startTrackBtn.addEventListener('click', startDemoTracking);
 
 // initial resize in case a poster is present
 setTimeout(()=> resizeCanvas(), 200);
+
+// Sidebar resizing & collapse
+const layout = document.getElementById('layout');
+const splitter = document.getElementById('splitter');
+const collapseBtn = document.getElementById('collapseBtn');
+let isResizing = false;
+
+// restore saved sidebar width
+const saved = localStorage.getItem('sidebarWidth');
+if(saved && layout) layout.style.gridTemplateColumns = saved + ' 1fr';
+
+if(splitter){
+	splitter.addEventListener('mousedown', (e)=>{
+		if(layout.classList.contains('collapsed')) return;
+		isResizing = true; document.body.style.cursor = 'col-resize';
+	});
+
+	window.addEventListener('mousemove', (e)=>{
+		if(!isResizing) return;
+		const rect = layout.getBoundingClientRect();
+		let newW = Math.max(120, Math.min(e.clientX - rect.left, rect.width - 160));
+		layout.style.gridTemplateColumns = `${newW}px 1fr`;
+	});
+
+	window.addEventListener('mouseup', ()=>{
+		if(!isResizing) return;
+		isResizing = false; document.body.style.cursor = '';
+		// persist width
+		const cols = window.getComputedStyle(layout).gridTemplateColumns.split(' ')[0];
+		localStorage.setItem('sidebarWidth', parseInt(cols,10));
+	});
+
+	// touch support for splitter
+	splitter.addEventListener('touchstart', (e)=>{ if(layout.classList.contains('collapsed')) return; isResizing=true; });
+	window.addEventListener('touchmove', (e)=>{ if(!isResizing) return; const t = e.touches[0]; const rect = layout.getBoundingClientRect(); let newW = Math.max(120, Math.min(t.clientX - rect.left, rect.width - 160)); layout.style.gridTemplateColumns = `${newW}px 1fr`; });
+	window.addEventListener('touchend', ()=>{ if(!isResizing) return; isResizing=false; const cols = window.getComputedStyle(layout).gridTemplateColumns.split(' ')[0]; localStorage.setItem('sidebarWidth', parseInt(cols,10)); });
+}
+
+if(collapseBtn){
+	collapseBtn.addEventListener('click', ()=>{
+		const collapsed = layout.classList.toggle('collapsed');
+		if(collapsed){
+			// store current width
+			const cols = window.getComputedStyle(layout).gridTemplateColumns.split(' ')[0];
+			localStorage.setItem('sidebarPrevWidth', parseInt(cols,10));
+			layout.style.gridTemplateColumns = '64px 1fr';
+			collapseBtn.textContent = '»';
+		} else {
+			const prev = localStorage.getItem('sidebarPrevWidth') || localStorage.getItem('sidebarWidth') || 300;
+			layout.style.gridTemplateColumns = `${prev}px 1fr`;
+			collapseBtn.textContent = '⟨';
+		}
+		// trigger resize of canvas after layout change
+		setTimeout(resizeCanvas, 120);
+	});
+}
