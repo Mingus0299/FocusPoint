@@ -103,6 +103,16 @@ async def health() -> dict:
     return {"ok": True}
 
 
+@app.get("/")
+async def root() -> dict:
+    return {
+        "name": "FocusPoint",
+        "status": "ok",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
 @app.post("/sessions", response_model=SessionCreateResponse)
 async def create_session(payload: SessionCreateRequest) -> SessionCreateResponse:
     fps_target = payload.fps_target or settings.fps_target
