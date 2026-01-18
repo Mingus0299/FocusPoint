@@ -23,6 +23,7 @@ const startTrackBtn = document.getElementById('startTrackBtn');
 const saveBtn = document.getElementById('saveBtn');
 const loopToggle = document.getElementById('loopToggle');
 const info = document.getElementById('info');
+const summaryText = document.getElementById('summaryText');
 
 let points = []; // display coordinates (canvas space)
 let closed = false;
@@ -35,6 +36,7 @@ let apiBase = null;
 let sessionVideo = null;
 let trackingMeta = null;
 let wsKeepAlive = null;
+let lastSummary = null;
 
 function resizeCanvas(){
 	const rect = video.getBoundingClientRect();
@@ -120,6 +122,26 @@ function finalize(){
 
 function setInfo(text){
 	if(info) info.textContent = text;
+}
+
+function renderSummary(summary){
+	if(!summaryText) return;
+	if(!summary){
+		summaryText.textContent = 'No summary yet.';
+		return;
+	}
+	const lines = [
+		`Tracks: ${summary.total_tracks ?? 0}`,
+		`Avg confidence: ${Math.round((summary.avg_confidence || 0) * 100)}%`,
+		`Reanchor ok: ${summary.reanchor_success ?? 0}`,
+		`Reanchor fail: ${summary.reanchor_fail ?? 0}`,
+		`Out of frame: ${summary.out_of_frame ?? 0}`,
+		`Low conf: ${summary.low_confidence ?? 0}`,
+	];
+	if(summary.last_mode){
+		lines.push(`Last mode: ${summary.last_mode}`);
+	}
+	summaryText.textContent = lines.join('\n');
 }
 
 function getApiBase(){
@@ -352,13 +374,22 @@ async function startTracking(){
 		tracking = false;
 		startTrackBtn.textContent = 'Start Tracking';
 		trackingMeta = null;
+		lastSummary = null;
 		if(socket){
 			socket.close();
 			socket = null;
 		}
-		if(sessionId){
+		const endSessionId = sessionId;
+		const endApiBase = apiBase;
+		if(endSessionId){
 			try{
-				await fetch(`${apiBase}/sessions/${sessionId}/end`, {method:'POST'});
+				const endRes = await fetch(`${endApiBase}/sessions/${endSessionId}/end`, {method:'POST'});
+				if(endRes.ok){
+					lastSummary = await endRes.json();
+					renderSummary(lastSummary);
+				}else{
+					renderSummary(null);
+				}
 			}catch(e){}
 		}
 		sessionId = null;
@@ -388,6 +419,8 @@ async function startTracking(){
 	const sessionData = await sessionRes.json();
 	sessionId = sessionData.session_id;
 	sessionVideo = sessionData.video;
+	lastSummary = null;
+	renderSummary(null);
 	socket = connectWebSocket(sessionData.ws_url, apiBase);
 
 	const framePoints = toFramePoints(points);
