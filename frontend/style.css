@@ -1,255 +1,241 @@
 :root {
-    --c1: #edba97; /* light peach */
-    --c2: #e17426; /* orange */
-    --c3: #701b15; /* dark red */
-    --c4: rgb(164, 192, 193); /* muted teal */
-    --c5: #0a4152; /* dark teal */
-    --bg-a: linear-gradient(180deg, #071421 0%, #071827 70%);
-    --card: rgba(10, 65, 82, 0.86);
-}
-* {
-    box-sizing: border-box;
-}
-html,
-body,
-#app {
-    height: 100%;
-    margin: 0;
-    font-family:
-        Inter,
-        system-ui,
-        Segoe UI,
-        Roboto,
-        Arial;
-}
-body {
-    background: var(--bg-a);
-    color: var(--c4);
-    padding: 28px;
-}
-#app {
-    max-width: 1200px;
-    margin: 0 auto;
-}
-/* layout */
-#layout {
-    display: grid;
-    grid-template-columns: 300px 1fr;
-    gap: 16px;
-    align-items: start;
-    transition: grid-template-columns 160ms ease;
-}
-#splitter {
-    width: 8px;
-    cursor: col-resize;
-    background: transparent;
-    z-index: 6;
-}
-#splitter:hover {
-    background: linear-gradient(
-        90deg,
-        rgba(255, 255, 255, 0.03),
-        rgba(255, 255, 255, 0.06)
-    );
-    border-radius: 4px;
+  --c1: #edba97;              /* light peach */
+  --c2: #e17426;              /* orange */
+  --c3: #701b15;              /* dark red */
+  --c4: rgb(164, 192, 193);   /* muted teal */
+  --c5: #0a4152;              /* dark teal */
+  --bg-a: linear-gradient(180deg, #071421 0%, #071827 70%);
 }
 
-/* collapsed layout: hide all options so only collapse button remains */
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden; /* never scroll */
+  font-family: Inter, system-ui, Segoe UI, Roboto, Arial;
+}
+
+body {
+  background: var(--bg-a);
+  color: var(--c4);
+}
+
+/* App fills viewport */
+#app {
+  height: 100vh;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Header */
+#header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.header-left { display: flex; flex-direction: column; gap: 4px; }
+
+.title { font-size: 22px; font-weight: 700; color: var(--c1); }
+.subtitle { font-size: 13px; color: var(--c4); opacity: 0.95; }
+
+.header-controls { display: flex; gap: 8px; align-items: center; }
+
+.pill {
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+  color: var(--c4);
+}
+
+/* Layout grid (fills remaining space) */
+#layout {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 14px;
+}
+
+/* Card */
+.card {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+}
+
+/* Sidebar */
+#sidebar { display: flex; flex-direction: column; gap: 10px; }
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#sidebar h3 { margin: 0; color: var(--c1); font-size: 15px; }
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+  color: var(--c4);
+  cursor: pointer;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255,255,255,0.06);
+  margin: 6px 0;
+}
+
+/* Controls */
+.control-row { display: flex; flex-direction: column; gap: 8px; }
+.control-row.buttons { flex-direction: row; gap: 8px; flex-wrap: wrap; }
+label { font-size: 12px; color: rgba(164,192,193,0.85); }
+
+input[type="text"], input[type="file"] {
+  background: rgba(0,0,0,0.15);
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 9px 10px;
+  border-radius: 10px;
+  color: var(--c4);
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(164,192,193,0.75);
+}
+
+/* Buttons */
+button {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: var(--c1);
+  padding: 9px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease;
+}
+button:hover { transform: translateY(-1px); background: rgba(255,255,255,0.04); }
+
+button.primary {
+  background: var(--c2);
+  border: 0;
+  color: #071421;
+  font-weight: 650;
+}
+
+/* Main viewer */
+#main {
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 10px;
+}
+
+/* Video container already display:flex centered; keep it */
+#videoContainer {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: #000;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.04);
+}
+
+/* Make video always fill the container area, but render content with contain */
+#video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;   /* key: fits by height if tall, by width if wide */
+  background: #000;
+}
+
+/* Canvas covers the whole container for reliable clicking */
+canvas#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+}
+
+/* Info/status line */
+#info {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: rgba(0,0,0,0.18);
+  color: rgba(164,192,193,0.9);
+  font-size: 13px;
+}
+
+/* Summary */
+.summary-block {
+  margin-top: auto;
+  padding: 10px;
+  border-radius: 12px;
+  background: rgba(10,65,82,0.35);
+  border: 1px solid rgba(255,255,255,0.04);
+}
+.summary-block h4 { margin: 0 0 6px 0; color: var(--c1); font-size: 13px; }
+#summaryText { font-size: 12px; color: var(--c4); white-space: pre-line; line-height: 1.4; }
+
+/* Sidebar truly hidden */
 #layout.collapsed {
-    grid-template-columns: 64px 1fr;
+  grid-template-columns: 0px 1fr;
 }
 #layout.collapsed #sidebar {
-    overflow: visible;
-    padding-top: 8px;
-}
-#layout.collapsed #sidebar h3,
-#layout.collapsed .control-row,
-#layout.collapsed #palette,
-#layout.collapsed .control-row.buttons,
-#layout.collapsed input[type="text"],
-#layout.collapsed input[type="file"],
-#layout.collapsed label {
-    display: none;
-}
-#layout.collapsed .sidebar-header {
-    display: flex;
-    justify-content: center;
-}
-#layout.collapsed .sidebar-header button {
-    padding: 6px;
-    border-radius: 8px;
-}
-.header-left{display:flex;flex-direction:column}
-#header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
-#header .title{font-size:22px;color:var(--c1);font-weight:700}
-#header .subtitle{font-size:13px;color:var(--c4);opacity:0.95}
-.header-controls{display:flex;gap:8px;align-items:center}
-.header-controls button{padding:6px 10px}
-#sidebar {
-    padding: 12px;
-}
-.sidebar-header {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 6px;
-}
-.sidebar-header button {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    color: var(--c4);
-    padding: 6px 8px;
-    border-radius: 8px;
-    cursor: pointer;
-}
-.sidebar-header button:focus {
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(225, 116, 38, 0.12);
-}
-.card {
-    background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.02),
-        rgba(255, 255, 255, 0.01)
-    );
-    border-radius: 12px;
-    padding: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.03);
-    box-shadow: 0 6px 18px rgba(10, 16, 22, 0.4);
-}
-/* legacy controls wrapper removed from HTML; keep basic styles if present */
-#controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-    margin-bottom: 10px;
-}
-#controls label {
-    font-size: 13px;
-    color: var(--c4);
-}
-button {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    color: var(--c1);
-    padding: 8px 10px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 180ms ease;
-}
-button:hover {
-    transform: translateY(-2px);
-    background: rgba(255, 255, 255, 0.02);
-}
-button.primary {
-    background: var(--c2);
-    color: #071421;
-    border: 0;
-    box-shadow: 0 6px 18px rgba(225, 116, 38, 0.12);
-}
-#videoContainer {
-    position: relative;
-    background: #000;
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.03);
-    min-height: 240px;
-}
-video {
-    display: block;
-    max-width: 100%;
-    height: auto;
-    width: 100%;
-    background: #000;
-}
-canvas#overlay {
-    position: absolute;
-    left: 0;
-    top: 0;
-    pointer-events: auto;
-}
-#info {
-    margin-top: 12px;
-    color: var(--c4);
-    font-size: 13px;
+  width: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.card > h3 {
-    margin: 0 0 8px 0;
-    color: var(--c1);
-}
-.control-row {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 10px;
-}
-.control-row.buttons {
-    flex-direction: row;
-    gap: 8px;
-}
-input[type="text"],
-input[type="file"] {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.04);
-    padding: 8px;
-    border-radius: 8px;
-    color: var(--c4);
-}
-#palette {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-    flex-wrap: wrap;
-}
-.swatch {
-    padding: 8px 10px;
-    border-radius: 6px;
-    color: #071421;
-    font-weight: 600;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-}
-.summary-block {
-    margin-top: 14px;
-    padding: 10px;
-    border-radius: 10px;
-    background: rgba(10, 65, 82, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-}
-.summary-block h4 {
-    margin: 0 0 8px 0;
-    color: var(--c1);
-    font-size: 14px;
-}
-#summaryText {
-    font-size: 12px;
-    color: var(--c4);
-    white-space: pre-line;
-    line-height: 1.4;
-}
+/* Floating open button */
+.sidebar-open {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 20;
 
-/* small screens: stack layout */
-@media (max-width: 880px) {
-    #layout {
-        grid-template-columns: 1fr;
-    }
-    #sidebar {
-        order: 2;
-    }
-    #main {
-        order: 1;
-    }
-    #header{flex-direction:column;align-items:flex-start}
-    .header-controls{width:100%;display:flex;justify-content:flex-start}
-}
+  display: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
 
-/* small screens */
-@media (max-width: 600px) {
-    #controls {
-        gap: 6px;
-        font-size: 13px;
-    }
-    button {
-        padding: 6px 8px;
-    }
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(10,65,82,0.65);
+  color: var(--c4);
+  font-size: 18px;
+}
+#layout.collapsed .sidebar-open { display: inline-flex; align-items:center; justify-content:center; }
+
+/* Mobile */
+@media (max-width: 900px) {
+  #layout { grid-template-columns: 1fr; }
 }
