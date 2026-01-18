@@ -34,15 +34,6 @@
             <input id="fileInput" type="file" accept="video/*" />
           </div>
 
-          <div class="control-row">
-            <label>Stream URL</label>
-            <input id="streamUrl" type="text" placeholder="http://.../mjpeg or video url" />
-          </div>
-
-          <div class="control-row">
-            <button id="setStream">Set Stream</button>
-          </div>
-
           <div class="divider"></div>
 
           <!-- NEW: gate annotation -->
@@ -85,6 +76,7 @@
       </div>
     </div>
 
+    <script>window.API_BASE = "http://127.0.0.1:8000"</script>
     <script src="app.js"></script>
   </body>
 </html>

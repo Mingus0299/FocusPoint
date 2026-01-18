@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class SessionCreateRequest(BaseModel):
     video_id: str | None = None
+    video_url: str | None = None
     fps_target: float | None = None
 
 
@@ -17,6 +18,7 @@ class SessionCreateResponse(BaseModel):
     session_id: str
     video: VideoInfo
     ws_url: str
+    fps_target: float
 
 
 class AnnotationRequest(BaseModel):
@@ -46,3 +48,8 @@ class SessionSummary(BaseModel):
     out_of_frame: int
     low_confidence: int
     last_mode: str | None = None
+
+
+class VideoUploadResponse(BaseModel):
+    video_id: str
+    url: str

@@ -12,8 +12,6 @@ const colors = {
 };
 
 const fileInput = document.getElementById('fileInput');
-const streamUrl = document.getElementById('streamUrl');
-const setStream = document.getElementById('setStream');
 
 const modeToggle = document.getElementById('modeToggle');
 const loopToggle = document.getElementById('loopToggle');
@@ -48,6 +46,10 @@ let sessionVideo = null;
 let trackingMeta = null;
 let wsKeepAlive = null;
 let lastSummary = null;
+let currentVideo = { kind: 'none', id: null, url: null };
+let lastFrameAt = null;
+let lastFramePoints = null;
+const leadSeconds = 0.05;
 
 /* ========= Helpers ========= */
 function getVideoContainer() {
@@ -170,6 +172,25 @@ function resizeCanvas() {
   draw();
 }
 
+function resetForNewVideo(){
+  clearAll();
+  annotationActive = false;
+  mode = 'view';
+  modeToggle.textContent = 'Mode: View';
+  canvas.style.pointerEvents = 'none';
+  sessionVideo = null;
+  trackingMeta = null;
+  lastSummary = null;
+  currentVideo = { kind: 'none', id: null, url: null };
+  lastFrameAt = null;
+  lastFramePoints = null;
+}
+
+function setVideoSource(url){
+  video.src = url;
+  video.loop = true;
+  video.play().catch(()=>{});
+}
 
 function toCanvasCoords(evt) {
   const r = canvas.getBoundingClientRect();
@@ -240,7 +261,7 @@ function undo(){
 /* ========= Annotation gating ========= */
 function startAnnotation(){
   if(tracking) return alert('Stop tracking before annotating.');
-  if(!video.src) return alert('Load a video first.');
+  if(currentVideo.kind !== 'upload') return alert('Upload a video first.');
 
   freezeOnFirstFrame();
 
@@ -308,7 +329,23 @@ function connectWebSocket(wsPath, baseUrl){
     try { payload = JSON.parse(event.data); } catch { return; }
     if(!payload || !payload.points) return;
 
-    points = fromFramePoints(payload.points);
+    const rawPoints = fromFramePoints(payload.points);
+    const now = performance.now();
+    let displayPoints = rawPoints;
+
+    if(!video.paused && lastFramePoints && lastFramePoints.length === rawPoints.length && lastFrameAt){
+      const dt = (now - lastFrameAt) / 1000;
+      if(dt > 0){
+        displayPoints = rawPoints.map((p, i)=>{
+          const prev = lastFramePoints[i];
+          const vx = (p.x - prev.x) / dt;
+          const vy = (p.y - prev.y) / dt;
+          return { x: p.x + vx * leadSeconds, y: p.y + vy * leadSeconds };
+        });
+      }
+    }
+
+    points = displayPoints;
     closed = true;
 
     trackingMeta = {
@@ -316,6 +353,8 @@ function connectWebSocket(wsPath, baseUrl){
       mode: payload.mode,
       events: payload.events || []
     };
+    lastFrameAt = now;
+    lastFramePoints = rawPoints;
 
     setInfo(`mode: ${payload.mode || 'flow'} | conf: ${Math.round((payload.confidence || 0) * 100)}%`);
     draw();
@@ -445,42 +484,53 @@ modeToggle.addEventListener('click', ()=>{
 });
 
 /* ========= Video loading ========= */
-fileInput.addEventListener('change', (e)=>{
+async function uploadVideo(file){
+  const base = getApiBase();
+  const form = new FormData();
+  form.append('file', file, file.name || 'video.mp4');
+
+  let res;
+  try{
+    res = await fetch(`${base}/video/upload`, { method: 'POST', body: form });
+  } catch {
+    return { ok: false, error: 'Failed to reach backend for upload.' };
+  }
+
+  if(!res.ok){
+    const msg = await res.text();
+    return { ok: false, error: `Upload error: ${msg}` };
+  }
+
+  const data = await res.json();
+  const url = new URL(data.url, base).toString();
+  return { ok: true, videoId: data.video_id, url };
+}
+
+fileInput.addEventListener('change', async (e)=>{
   const f = e.target.files && e.target.files[0];
   if(!f) return;
 
-  clearAll();
-  annotationActive = false;
-  mode = 'view';
-  modeToggle.textContent = 'Mode: View';
-  canvas.style.pointerEvents = 'none';
+  resetForNewVideo();
+  setInfo('Uploading video to backend…');
 
-  video.src = URL.createObjectURL(f);
-  video.loop = true;
-  video.play().catch(()=>{});
-  setInfo('Video loaded. Click “Start Annotation” to begin.');
-});
+  const result = await uploadVideo(f);
+  if(!result.ok){
+    setInfo(result.error || 'Upload failed.');
+    return;
+  }
 
-setStream.addEventListener('click', ()=>{
-  const url = streamUrl.value.trim();
-  if(!url) return alert('Enter a stream or video URL');
-
-  clearAll();
-  annotationActive = false;
-  mode = 'view';
-  modeToggle.textContent = 'Mode: View';
-  canvas.style.pointerEvents = 'none';
-
-  video.src = url;
-  video.loop = true;
-  video.play().catch(()=>{});
-  setInfo('Stream set. Click “Start Annotation” to begin.');
+  currentVideo = { kind: 'upload', id: result.videoId, url: result.url };
+  setVideoSource(result.url);
+  setInfo('Video uploaded. Click “Start Annotation” to begin.');
 });
 
 video.addEventListener("loadedmetadata", () => {
   resizeCanvas();
 });
 window.addEventListener("resize", resizeCanvas);
+
+video.addEventListener('pause', ()=>{ pauseTrackingSession(); });
+video.addEventListener('play', ()=>{ resumeTrackingSession(); });
 
 /* Loop toggle */
 if(loopToggle){
@@ -516,11 +566,26 @@ saveBtn.addEventListener('click', ()=>{
 function getApiBase(){
   if(apiBase) return apiBase;
   if(window.API_BASE) return window.API_BASE;
-  const streamValue = streamUrl.value.trim();
-  if(streamValue){
-    try { return new URL(streamValue, window.location.href).origin; } catch {}
+  if(window.location && window.location.origin && window.location.origin !== 'null'){
+    return window.location.origin;
   }
   return 'http://127.0.0.1:8000';
+}
+
+async function pauseTrackingSession(){
+  if(!tracking || !sessionId) return;
+  const base = getApiBase();
+  try{
+    await fetch(`${base}/sessions/${sessionId}/pause`, { method: 'POST' });
+  } catch {}
+}
+
+async function resumeTrackingSession(){
+  if(!tracking || !sessionId) return;
+  const base = getApiBase();
+  try{
+    await fetch(`${base}/sessions/${sessionId}/resume`, { method: 'POST' });
+  } catch {}
 }
 
 async function startTracking(){
@@ -529,6 +594,8 @@ async function startTracking(){
     startTrackBtn.textContent = 'Start Demo Tracking';
     trackingMeta = null;
     lastSummary = null;
+    lastFrameAt = null;
+    lastFramePoints = null;
 
     if(socket){
       socket.close();
@@ -564,14 +631,19 @@ async function startTracking(){
   }
 
   if(points.length < 3) return alert('Annotate first (3 points).');
+  if(currentVideo.kind !== 'upload' || !currentVideo.id){
+    return alert('Upload a video first.');
+  }
   apiBase = getApiBase();
+
+  const payload = { video_id: currentVideo.id };
 
   let sessionRes;
   try{
     sessionRes = await fetch(`${apiBase}/sessions`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({})
+      body: JSON.stringify(payload)
     });
   } catch {
     return alert('Failed to reach backend. Check API base.');
@@ -586,6 +658,8 @@ async function startTracking(){
   sessionId = sessionData.session_id;
   sessionVideo = sessionData.video;
   lastSummary = null;
+  lastFrameAt = null;
+  lastFramePoints = null;
   renderSummary(null);
 
   socket = connectWebSocket(sessionData.ws_url, apiBase);
