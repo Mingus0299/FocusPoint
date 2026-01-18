@@ -22,12 +22,21 @@ const clearBtn = document.getElementById('clearBtn');
 const startTrackBtn = document.getElementById('startTrackBtn');
 const saveBtn = document.getElementById('saveBtn');
 const loopToggle = document.getElementById('loopToggle');
+const info = document.getElementById('info');
+const summaryText = document.getElementById('summaryText');
 
 let points = []; // display coordinates (canvas space)
 let closed = false;
 let mode = 'draw'; // or 'view'
 let tracking = false;
-let demoInterval = null;
+let sessionId = null;
+let annotationId = null;
+let socket = null;
+let apiBase = null;
+let sessionVideo = null;
+let trackingMeta = null;
+let wsKeepAlive = null;
+let lastSummary = null;
 
 function resizeCanvas(){
 	const rect = video.getBoundingClientRect();
@@ -69,6 +78,22 @@ function draw(){
 		ctx.lineWidth = 1.5;
 		ctx.stroke();
 	}
+
+	if(trackingMeta){
+		const cx = points.reduce((s,p)=>s+p.x,0)/points.length;
+		const cy = points.reduce((s,p)=>s+p.y,0)/points.length - 12;
+		const confPct = Math.round((trackingMeta.confidence || 0) * 100);
+		const text = `${trackingMeta.mode || 'flow'} ${confPct}%`;
+		ctx.font = '12px sans-serif';
+		const metrics = ctx.measureText(text);
+		const pad = 6;
+		const boxW = metrics.width + pad * 2;
+		const boxH = 18;
+		ctx.fillStyle = colors.confBg;
+		ctx.fillRect(cx - boxW/2, cy - boxH, boxW, boxH);
+		ctx.fillStyle = colors.infoText;
+		ctx.fillText(text, cx - boxW/2 + pad, cy - 4);
+	}
 }
 
 function addPoint(p){
@@ -93,6 +118,110 @@ function finalize(){
 	if(points.length < 3) return alert('Need at least 3 points to finalize');
 	closed = true;
 	draw();
+}
+
+function setInfo(text){
+	if(info) info.textContent = text;
+}
+
+function renderSummary(summary){
+	if(!summaryText) return;
+	if(!summary){
+		summaryText.textContent = 'No summary yet.';
+		return;
+	}
+	const lines = [
+		`Tracks: ${summary.total_tracks ?? 0}`,
+		`Avg confidence: ${Math.round((summary.avg_confidence || 0) * 100)}%`,
+		`Reanchor ok: ${summary.reanchor_success ?? 0}`,
+		`Reanchor fail: ${summary.reanchor_fail ?? 0}`,
+		`Out of frame: ${summary.out_of_frame ?? 0}`,
+		`Low conf: ${summary.low_confidence ?? 0}`,
+	];
+	if(summary.last_mode){
+		lines.push(`Last mode: ${summary.last_mode}`);
+	}
+	summaryText.textContent = lines.join('\n');
+}
+
+function getApiBase(){
+	if(apiBase) return apiBase;
+	if(window.API_BASE) return window.API_BASE;
+	const streamValue = streamUrl.value.trim();
+	if(streamValue){
+		try{
+			return new URL(streamValue, window.location.href).origin;
+		}catch(e){}
+	}
+	return 'http://127.0.0.1:8000';
+}
+
+function toFramePoints(canvasPoints){
+	const frameW = (sessionVideo && sessionVideo.width) || video.videoWidth || canvas.width;
+	const frameH = (sessionVideo && sessionVideo.height) || video.videoHeight || canvas.height;
+	const sx = frameW / canvas.width;
+	const sy = frameH / canvas.height;
+	return canvasPoints.map(p=>[Math.round(p.x * sx), Math.round(p.y * sy)]);
+}
+
+function fromFramePoints(framePoints){
+	const frameW = (sessionVideo && sessionVideo.width) || video.videoWidth || canvas.width;
+	const frameH = (sessionVideo && sessionVideo.height) || video.videoHeight || canvas.height;
+	const sx = canvas.width / frameW;
+	const sy = canvas.height / frameH;
+	return framePoints.map(p=>{
+		const x = Array.isArray(p) ? p[0] : p.x;
+		const y = Array.isArray(p) ? p[1] : p.y;
+		return {x: x * sx, y: y * sy};
+	});
+}
+
+function connectWebSocket(wsPath, baseUrl){
+	const base = new URL(baseUrl);
+	const proto = base.protocol === 'https:' ? 'wss:' : 'ws:';
+	const wsUrl = `${proto}//${base.host}${wsPath}`;
+	const ws = new WebSocket(wsUrl);
+
+	ws.addEventListener('open', ()=>{
+		ws.send('ready');
+		wsKeepAlive = setInterval(()=>{
+			if(ws.readyState === WebSocket.OPEN) ws.send('ping');
+		}, 15000);
+		setInfo('WebSocket connected');
+	});
+
+	ws.addEventListener('message', (event)=>{
+		let payload;
+		try{
+			payload = JSON.parse(event.data);
+		}catch(e){
+			return;
+		}
+		if(!payload || !payload.points) return;
+		points = fromFramePoints(payload.points);
+		closed = true;
+		trackingMeta = {
+			confidence: payload.confidence,
+			mode: payload.mode,
+			events: payload.events || []
+		};
+		setInfo(`mode: ${payload.mode || 'flow'} | conf: ${Math.round((payload.confidence || 0) * 100)}%`);
+		draw();
+	});
+
+	ws.addEventListener('close', ()=>{
+		if(wsKeepAlive){
+			clearInterval(wsKeepAlive);
+			wsKeepAlive = null;
+		}
+		setInfo('WebSocket closed');
+	});
+
+	ws.addEventListener('error', ()=>{
+		setInfo('WebSocket error');
+	});
+
+	return ws;
 }
 
 function nearestPointIndex(pos, maxDist=10){
@@ -226,11 +355,13 @@ window.addEventListener('resize', ()=> resizeCanvas());
 
 saveBtn.addEventListener('click', ()=>{
 	if(points.length===0) return alert('No polygon to save');
-	if(!video.videoWidth || !video.videoHeight) return alert('Video not loaded');
-	const sx = video.videoWidth / canvas.width;
-	const sy = video.videoHeight / canvas.height;
+	const frameW = (sessionVideo && sessionVideo.width) || video.videoWidth;
+	const frameH = (sessionVideo && sessionVideo.height) || video.videoHeight;
+	if(!frameW || !frameH) return alert('Video not loaded');
+	const sx = frameW / canvas.width;
+	const sy = frameH / canvas.height;
 	const framePoints = points.map(p=>({x: Math.round(p.x * sx), y: Math.round(p.y * sy)}));
-	const payload = {frameWidth: video.videoWidth, frameHeight: video.videoHeight, polygon: framePoints};
+	const payload = {frameWidth: frameW, frameHeight: frameH, polygon: framePoints};
 	const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(blob);
@@ -238,31 +369,83 @@ saveBtn.addEventListener('click', ()=>{
 	a.click();
 });
 
-function startDemoTracking(){
+async function startTracking(){
 	if(tracking){
-		tracking=false; startTrackBtn.textContent='Start Demo Tracking';
-		clearInterval(demoInterval); demoInterval=null; return;
-	}
-	if(points.length < 3) return alert('Draw and finalize polygon first');
-	// demo: jitter polygon vertices slightly and show confidence
-	tracking = true; startTrackBtn.textContent='Stop Demo Tracking';
-	demoInterval = setInterval(()=>{
-		// add small random jitter to simulate motion
-		for(let p of points){ p.x += (Math.random()-0.5)*2; p.y += (Math.random()-0.5)*2; }
+		tracking = false;
+		startTrackBtn.textContent = 'Start Tracking';
+		trackingMeta = null;
+		lastSummary = null;
+		if(socket){
+			socket.close();
+			socket = null;
+		}
+		const endSessionId = sessionId;
+		const endApiBase = apiBase;
+		if(endSessionId){
+			try{
+				const endRes = await fetch(`${endApiBase}/sessions/${endSessionId}/end`, {method:'POST'});
+				if(endRes.ok){
+					lastSummary = await endRes.json();
+					renderSummary(lastSummary);
+				}else{
+					renderSummary(null);
+				}
+			}catch(e){}
+		}
+		sessionId = null;
+		annotationId = null;
+		setInfo('Tracking stopped');
 		draw();
-			// show confidence text at centroid
-			const cx = points.reduce((s,p)=>s+p.x,0)/points.length;
-			const cy = points.reduce((s,p)=>s+p.y,0)/points.length - 10;
-			const conf = (0.5 + 0.5*Math.random()).toFixed(2);
-			ctx.fillStyle = colors.confBg;
-			ctx.fillRect(cx-42, cy-18, 84, 24);
-			ctx.fillStyle = colors.infoText;
-			ctx.font = '14px sans-serif';
-			ctx.fillText('conf: ' + conf, cx-30, cy+2);
-	}, 100);
+		return;
+	}
+
+	if(points.length < 3) return alert('Draw and finalize polygon first');
+	apiBase = getApiBase();
+
+	let sessionRes;
+	try{
+		sessionRes = await fetch(`${apiBase}/sessions`, {
+			method: 'POST',
+			headers: {'Content-Type': 'application/json'},
+			body: JSON.stringify({})
+		});
+	}catch(e){
+		return alert('Failed to reach backend. Check API base.');
+	}
+	if(!sessionRes.ok){
+		const msg = await sessionRes.text();
+		return alert(`Session error: ${msg}`);
+	}
+	const sessionData = await sessionRes.json();
+	sessionId = sessionData.session_id;
+	sessionVideo = sessionData.video;
+	lastSummary = null;
+	renderSummary(null);
+	socket = connectWebSocket(sessionData.ws_url, apiBase);
+
+	const framePoints = toFramePoints(points);
+	const annotationRes = await fetch(`${apiBase}/sessions/${sessionId}/annotations`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({points: framePoints})
+	});
+	if(!annotationRes.ok){
+		const msg = await annotationRes.text();
+		return alert(`Annotation error: ${msg}`);
+	}
+	const annotationData = await annotationRes.json();
+	annotationId = annotationData.annotation_id;
+
+	tracking = true;
+	startTrackBtn.textContent = 'Stop Tracking';
+	mode = 'view';
+	modeToggle.textContent = 'Mode: View';
+	canvas.style.pointerEvents = 'none';
+	setInfo(`Tracking session ${sessionId}`);
 }
 
-startTrackBtn.addEventListener('click', startDemoTracking);
+startTrackBtn.textContent = 'Start Tracking';
+startTrackBtn.addEventListener('click', startTracking);
 
 // initial resize in case a poster is present
 setTimeout(()=> resizeCanvas(), 200);
