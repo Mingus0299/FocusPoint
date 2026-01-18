@@ -1,11 +1,13 @@
+import mimetypes
 import os
 import time
 import uuid
+from urllib.parse import urlparse
 
 import cv2
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.config import settings
 from app.db import connect, disconnect, get_db
@@ -16,6 +18,7 @@ from app.models import (
     SessionCreateResponse,
     SessionSummary,
     VideoInfo,
+    VideoUploadResponse,
 )
 from app.services.gumloop import send_session_complete
 from app.services.sessions import SessionRegistry
@@ -37,6 +40,54 @@ ws_manager = ConnectionManager()
 session_registry = SessionRegistry(ws_manager, get_db)
 
 
+def _is_url(value: str) -> bool:
+    try:
+        return urlparse(value).scheme in {"http", "https", "rtsp"}
+    except Exception:
+        return False
+
+
+def _video_id_from_url(video_url: str) -> str:
+    parsed = urlparse(video_url)
+    name = os.path.basename(parsed.path)
+    return name or "stream"
+
+
+def _resolve_default_video_path() -> str:
+    path = settings.video_path
+    if _is_url(path):
+        return path
+    if os.path.exists(path):
+        return path
+    candidate = os.path.join(settings.video_dir, path)
+    if os.path.exists(candidate):
+        return candidate
+    raise HTTPException(status_code=404, detail="Default video not found")
+
+
+def _resolve_local_video_path(video_id: str) -> str:
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Missing video_id")
+    safe_id = os.path.basename(video_id)
+    if safe_id != video_id:
+        raise HTTPException(status_code=400, detail="Invalid video_id")
+    path = os.path.join(settings.video_dir, safe_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Video not found")
+    return path
+
+
+def _resolve_video_source(video_id: str | None, video_url: str | None) -> tuple[str, str]:
+    if video_url:
+        return video_url, (video_id or _video_id_from_url(video_url))
+    if video_id:
+        return _resolve_local_video_path(video_id), video_id
+    default_path = _resolve_default_video_path()
+    if _is_url(default_path):
+        return default_path, _video_id_from_url(default_path)
+    return default_path, os.path.basename(default_path)
+
+
 @app.on_event("startup")
 async def startup() -> None:
     await connect()
@@ -55,10 +106,18 @@ async def health() -> dict:
 @app.post("/sessions", response_model=SessionCreateResponse)
 async def create_session(payload: SessionCreateRequest) -> SessionCreateResponse:
     fps_target = payload.fps_target or settings.fps_target
-    state = await session_registry.create_session(settings.video_path, fps_target)
+    if payload.video_url:
+        raise HTTPException(status_code=400, detail="video_url is not supported. Upload a video and use video_id.")
+    if not payload.video_id:
+        raise HTTPException(status_code=400, detail="video_id is required. Upload a video first.")
+    video_id = payload.video_id
+    video_path = _resolve_local_video_path(video_id)
+    try:
+        state = await session_registry.create_session(video_path, fps_target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     video_info = state.video.info()
-    video_id = payload.video_id or os.path.basename(settings.video_path)
 
     db = get_db()
     if db is not None:
@@ -80,6 +139,7 @@ async def create_session(payload: SessionCreateRequest) -> SessionCreateResponse
             fps=video_info.fps,
         ),
         ws_url=f"/sessions/{state.session_id}/updates",
+        fps_target=fps_target,
     )
 
 
@@ -102,6 +162,22 @@ async def create_annotation(session_id: str, payload: AnnotationRequest) -> Anno
         )
 
     return AnnotationResponse(annotation_id=annotation_id)
+
+
+@app.post("/sessions/{session_id}/pause")
+async def pause_session(session_id: str) -> dict:
+    ok = await session_registry.pause_session(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"paused": True}
+
+
+@app.post("/sessions/{session_id}/resume")
+async def resume_session(session_id: str) -> dict:
+    ok = await session_registry.resume_session(session_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"paused": False}
 
 
 @app.post("/sessions/{session_id}/end", response_model=SessionSummary)
@@ -139,22 +215,62 @@ async def updates_ws(websocket: WebSocket, session_id: str) -> None:
 
 
 @app.get("/video/info", response_model=VideoInfo)
-async def video_info() -> VideoInfo:
-    source = VideoSource(settings.video_path)
+async def video_info(video_id: str | None = None) -> VideoInfo:
+    if not video_id:
+        raise HTTPException(status_code=400, detail="video_id is required")
+    path = _resolve_local_video_path(video_id)
+    try:
+        source = VideoSource(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     info = source.info()
     source.close()
     return VideoInfo(
-        video_id=os.path.basename(settings.video_path),
+        video_id=video_id,
         width=info.width,
         height=info.height,
         fps=info.fps,
     )
 
 
+@app.get("/video/file/{video_id}")
+async def video_file(video_id: str):
+    path = _resolve_local_video_path(video_id)
+    media_type, _ = mimetypes.guess_type(path)
+    return FileResponse(path, media_type=media_type or "application/octet-stream", filename=video_id)
+
+
+@app.post("/video/upload", response_model=VideoUploadResponse)
+async def upload_video(file: UploadFile = File(...)) -> VideoUploadResponse:
+    filename = file.filename or "video.mp4"
+    _, ext = os.path.splitext(filename)
+    ext = ext.lower() if ext else ".mp4"
+    video_id = f"{uuid.uuid4().hex}{ext}"
+
+    os.makedirs(settings.video_dir, exist_ok=True)
+    dest_path = os.path.join(settings.video_dir, video_id)
+
+    with open(dest_path, "wb") as handle:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            handle.write(chunk)
+
+    return VideoUploadResponse(video_id=video_id, url=f"/video/file/{video_id}")
+
+
 @app.get("/video/stream")
-async def video_stream():
+async def video_stream(video_id: str | None = None):
+    if not video_id:
+        raise HTTPException(status_code=400, detail="video_id is required")
+    path = _resolve_local_video_path(video_id)
+    try:
+        source = VideoSource(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     def frame_generator():
-        source = VideoSource(settings.video_path)
         try:
             while True:
                 frame, _ = source.read()

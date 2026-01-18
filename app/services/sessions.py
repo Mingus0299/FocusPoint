@@ -34,6 +34,9 @@ class SessionState:
     annotation_points: list[tuple[float, float]] | None = None
     pending_annotation: PendingAnnotation | None = None
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
+    pause_event: asyncio.Event = field(default_factory=asyncio.Event)
+    paused_at: float | None = None
+    paused_total: float = 0.0
     last_db_write: float = 0.0
     task: asyncio.Task | None = None
     started_at: float = field(default_factory=time.monotonic)
@@ -84,6 +87,9 @@ async def run_tracking_loop(state: SessionState, ws_manager: ConnectionManager, 
     frame_interval = 1.0 / state.fps_target if state.fps_target > 0 else 0.0
 
     while not state.stop_event.is_set():
+        await state.pause_event.wait()
+        if state.stop_event.is_set():
+            break
         loop_started = time.monotonic()
         frame, frame_index = state.video.read()
         if frame is None:
@@ -107,7 +113,7 @@ async def run_tracking_loop(state: SessionState, ws_manager: ConnectionManager, 
             updated_points, confidence, mode, events = _apply_tracker_result(state.annotation_points, result)
             state.annotation_points = updated_points
 
-            t = time.monotonic() - state.started_at
+            t = time.monotonic() - state.started_at - state.paused_total
             update = TrackUpdate(
                 session_id=state.session_id,
                 annotation_id=state.annotation_id or "",
@@ -162,6 +168,7 @@ class SessionRegistry:
             video=video,
             tracker=tracker,
         )
+        state.pause_event.set()
         state.task = asyncio.create_task(run_tracking_loop(state, self._ws_manager, self._db_getter))
         async with self._lock:
             self._sessions[session_id] = state
@@ -173,6 +180,7 @@ class SessionRegistry:
         if not state:
             return False
         state.stop_event.set()
+        state.pause_event.set()
         if state.task:
             await state.task
         state.video.close()
@@ -186,6 +194,27 @@ class SessionRegistry:
         if not state:
             return False
         state.pending_annotation = PendingAnnotation(annotation_id=annotation_id, points=points)
+        return True
+
+    async def pause_session(self, session_id: str) -> bool:
+        async with self._lock:
+            state = self._sessions.get(session_id)
+        if not state:
+            return False
+        if state.paused_at is None:
+            state.paused_at = time.monotonic()
+            state.pause_event.clear()
+        return True
+
+    async def resume_session(self, session_id: str) -> bool:
+        async with self._lock:
+            state = self._sessions.get(session_id)
+        if not state:
+            return False
+        if state.paused_at is not None:
+            state.paused_total += time.monotonic() - state.paused_at
+            state.paused_at = None
+        state.pause_event.set()
         return True
 
     async def get_session(self, session_id: str) -> SessionState | None:
