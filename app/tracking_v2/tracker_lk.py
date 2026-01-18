@@ -11,13 +11,14 @@ Point = Tuple[float, float]
 
 @dataclass
 class LKParams:
-    # Feature detection (Shi–Tomasi)
-    max_corners: int = 350
+    # --- Feature detection (Shi–Tomasi) ---
+    max_corners: int = 600
     quality_level: float = 0.005
     min_distance: int = 5
     block_size: int = 7
 
-    # LK optical flow (bigger helps echo / sudden motion a bit)
+    # --- LK optical flow ---
+    # Larger window / more pyramid levels helps with echo + faster motion
     win_size: Tuple[int, int] = (41, 41)
     max_level: int = 5
     term_criteria: Tuple[int, int, float] = (
@@ -26,41 +27,42 @@ class LKParams:
         0.01,
     )
 
-    # ROI / masks
+    # --- ROI / masks ---
     pad: int = 18
-    ring_px: int = 10  # boundary ring thickness
+    ring_px: int = 14  # boundary ring thickness (important for cavities)
 
-    # Stabilization / thresholds
-    fb_thresh: float = 3.0
-    max_step_px: float = 40.0
+    # --- Filtering / thresholds ---
+    fb_thresh: float = 3.0            # forward-backward error threshold (px)
+    max_step_px: float = 50.0         # filter out insane per-point jumps
     min_valid_pts: int = 25
     low_conf_thresh: float = 0.35
     recovered_conf_thresh: float = 0.55
 
-    # Affine estimation
+    # --- Affine estimation ---
     ransac_thresh: float = 4.0
     min_inliers: int = 10
+    smooth_affine_alpha: float = 0.7  # matrix smoothing (0..1; higher=smoother)
+    max_affine_translation_px: float = 45.0  # clamp per-frame tx/ty spike
 
-    # Optional smoothing of affine
-    smooth_affine_alpha: float = 0.6  # closer to 1.0 = smoother
+    # --- Output smoothing (polygon EMA) ---
+    poly_smooth_alpha: float = 0.87  # 0.85-0.95 (higher=smoother)
 
     # --- Recovery (template matching) ---
-    # When tracking is weak, we try to "snap" ROI back using template matching.
-    template_update_every: int = 15       # refresh template when stable
-    template_update_conf: float = 0.75    # only refresh when confident
-    template_min_size: int = 20           # ignore templates that are too tiny
+    template_update_every: int = 15
+    template_update_conf: float = 0.75
+    template_min_size: int = 20
 
-    # Stage 1: local search window (fast)
-    local_search_scale: float = 3.0       # search window size ~ scale * roi size (centered)
+    # Stage 1: local search (fast)
+    local_search_scale: float = 3.0
     local_match_thresh: float = 0.55
 
-    # Stage 2: global search on downsampled whole frame (robust)
-    global_downsample: float = 0.5        # 0.5 => 4x fewer pixels
+    # Stage 2: global search downsampled (robust)
+    global_downsample: float = 0.5
     global_match_thresh: float = 0.50
 
     # Recovery control
-    recovery_cooldown_frames: int = 5     # don't attempt recovery every single frame
-    attempt_recovery_on_fallback: bool = True  # if affine fails, allow recovery
+    recovery_cooldown_frames: int = 5
+    attempt_recovery_on_fallback: bool = True
 
 
 def _to_gray(frame: np.ndarray) -> np.ndarray:
@@ -70,7 +72,7 @@ def _to_gray(frame: np.ndarray) -> np.ndarray:
 
 
 def _preprocess_echo(gray: np.ndarray) -> np.ndarray:
-    # Reduce speckle a bit + improve local contrast
+    # Reduce speckle + boost local contrast (helps low-quality echo)
     g = cv2.medianBlur(gray, 3)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     g = clahe.apply(g)
@@ -113,7 +115,7 @@ def _bbox_expand_around_center(bbox, scale: float, w: int, h: int) -> Tuple[int,
 
 
 def _make_ring_mask(gray: np.ndarray, poly: np.ndarray, ring_px: int) -> np.ndarray:
-    """Mask that covers a ring around polygon boundary (good for cavity borders)."""
+    """Binary ring mask around polygon boundary (better than cavity interior)."""
     h, w = gray.shape[:2]
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.fillPoly(mask, [poly.astype(np.int32)], 255)
@@ -188,11 +190,24 @@ def _apply_affine_to_poly(poly: np.ndarray, M: np.ndarray) -> np.ndarray:
 
 
 def _blend_affine(M_prev: Optional[np.ndarray], M_new: np.ndarray, alpha: float) -> np.ndarray:
-    """Simple elementwise smoothing of 2x3 affine."""
     if M_prev is None:
-        return M_new
+        return M_new.astype(np.float32)
     a = float(alpha)
     return (a * M_new + (1.0 - a) * M_prev).astype(np.float32)
+
+
+def _clamp_affine_translation(M: np.ndarray, max_t: float) -> np.ndarray:
+    M = M.astype(np.float32, copy=True)
+    M[0, 2] = float(np.clip(M[0, 2], -max_t, max_t))
+    M[1, 2] = float(np.clip(M[1, 2], -max_t, max_t))
+    return M
+
+
+def _poly_ema(prev: Optional[np.ndarray], cur: np.ndarray, alpha: float) -> np.ndarray:
+    if prev is None:
+        return cur.copy()
+    a = float(alpha)
+    return (a * prev + (1.0 - a) * cur).astype(np.float32)
 
 
 def _safe_crop(gray: np.ndarray, bbox) -> np.ndarray:
@@ -215,11 +230,11 @@ def _match_template(search: np.ndarray, templ: np.ndarray) -> Tuple[float, Tuple
 class LKTracker:
     """
     Echo-friendly tracker:
-      - seeds features on polygon boundary ring
+      - boundary ring feature seeding
       - LK + forward-backward filtering
-      - estimates affine each frame with RANSAC (handles scale/rotation)
-      - falls back to translation if affine fails
-      - two-stage template recovery for large sudden motion
+      - affine RANSAC each frame + inlier refinement
+      - two-stage template recovery for large jumps
+      - polygon EMA smoothing for smooth output
 
     Contract:
       init(frame, polygon_points)
@@ -231,15 +246,17 @@ class LKTracker:
         self._initialized = False
 
         self._poly: Optional[np.ndarray] = None
+        self._poly_smooth: Optional[np.ndarray] = None
+
         self._prev_gray: Optional[np.ndarray] = None
         self._prev_pts: Optional[np.ndarray] = None
 
         self._was_low = False
-        self._M_smooth: Optional[np.ndarray] = None  # for affine smoothing
+        self._M_smooth: Optional[np.ndarray] = None
 
         # Recovery state
         self._template: Optional[np.ndarray] = None
-        self._template_bbox: Optional[Tuple[int, int, int, int]] = None  # bbox used to extract template (frame coords)
+        self._template_bbox: Optional[Tuple[int, int, int, int]] = None
         self._frame_idx: int = 0
         self._last_recovery_attempt: int = -10**9
 
@@ -250,6 +267,7 @@ class LKTracker:
         if poly.ndim != 2 or poly.shape[1] != 2 or poly.shape[0] < 3:
             self._initialized = False
             self._poly = None
+            self._poly_smooth = None
             self._prev_gray = None
             self._prev_pts = None
             return
@@ -268,6 +286,7 @@ class LKTracker:
             self._template_bbox = None
 
         self._poly = poly
+        self._poly_smooth = poly.copy()
         self._prev_gray = gray0
         self._prev_pts = pts
         self._was_low = False
@@ -286,7 +305,6 @@ class LKTracker:
         events.append("RESEED_FEATURES")
 
     def _maybe_update_template(self, gray: np.ndarray, conf: float, mode: str, events: List[str]) -> None:
-        """Refresh template occasionally when stable, to avoid staleness."""
         if self._poly is None:
             return
         if conf < self.p.template_update_conf:
@@ -305,17 +323,10 @@ class LKTracker:
             events.append("TEMPLATE_REFRESH")
 
     def _attempt_recovery(self, gray: np.ndarray, events: List[str]) -> bool:
-        """
-        Two-stage recovery:
-          1) local search around current ROI
-          2) if fails, global downsampled search
-        On success: shifts polygon to matched location and reseeds points.
-        Returns True if recovered.
-        """
-        if self._poly is None or self._template is None or self._template_bbox is None:
+        """Two-stage recovery: local window first; if fails, global downsampled whole-frame."""
+        if self._poly is None or self._template is None:
             return False
 
-        # Cooldown
         if (self._frame_idx - self._last_recovery_attempt) < self.p.recovery_cooldown_frames:
             return False
         self._last_recovery_attempt = self._frame_idx
@@ -323,20 +334,17 @@ class LKTracker:
         H, W = gray.shape[:2]
         cur_bbox = _poly_to_bbox(self._poly, self.p.pad, W, H)
         templ = self._template
-        tw, th = templ.shape[1], templ.shape[0]
 
-        # --- Stage 1: local search ---
+        # Stage 1: local search
         search_bbox = _bbox_expand_around_center(cur_bbox, self.p.local_search_scale, W, H)
         search = _safe_crop(gray, search_bbox)
 
         score, (mx, my) = _match_template(search, templ)
         if score >= self.p.local_match_thresh:
-            # matched top-left in search coords -> frame coords
             sx0, sy0, _, _ = search_bbox
             new_x0 = sx0 + mx
             new_y0 = sy0 + my
 
-            # Old template bbox top-left (for shift estimate)
             old_x0, old_y0, _, _ = cur_bbox
             dx = float(new_x0 - old_x0)
             dy = float(new_y0 - old_y0)
@@ -344,33 +352,28 @@ class LKTracker:
             self._poly[:, 0] += dx
             self._poly[:, 1] += dy
             events.append("RECOVER_LOCAL_SUCCESS")
-
-            # Reseed after snap
             self._reseed(gray, events)
             return True
         else:
             events.append("RECOVER_LOCAL_FAIL")
 
-        # --- Stage 2: global downsampled search ---
+        # Stage 2: global downsampled search
         ds = float(self.p.global_downsample)
-        if ds <= 0.0 or ds >= 1.0:
+        if not (0.0 < ds < 1.0):
             ds = 0.5
 
         small = cv2.resize(gray, None, fx=ds, fy=ds, interpolation=cv2.INTER_AREA)
         templ_s = cv2.resize(templ, None, fx=ds, fy=ds, interpolation=cv2.INTER_AREA)
 
-        # If template becomes too small, don't bother
         if templ_s.shape[0] < 8 or templ_s.shape[1] < 8:
             events.append("RECOVER_GLOBAL_SKIP_SMALL_TEMPLATE")
             return False
 
         score_g, (gx, gy) = _match_template(small, templ_s)
         if score_g >= self.p.global_match_thresh:
-            # Map back to full-res coords
             new_x0 = int(round(gx / ds))
             new_y0 = int(round(gy / ds))
 
-            # Shift from current bbox top-left
             old_x0, old_y0, _, _ = cur_bbox
             dx = float(new_x0 - old_x0)
             dy = float(new_y0 - old_y0)
@@ -378,7 +381,6 @@ class LKTracker:
             self._poly[:, 0] += dx
             self._poly[:, 1] += dy
             events.append("RECOVER_GLOBAL_SUCCESS")
-
             self._reseed(gray, events)
             return True
         else:
@@ -398,16 +400,22 @@ class LKTracker:
 
         if self._prev_pts.shape[0] == 0:
             events.append("NO_FEATURES")
-            # Attempt recovery first (helps big jumps)
             self._attempt_recovery(gray, events)
             self._prev_gray = gray
-            return {"points": [(float(x), float(y)) for x, y in self._poly], "confidence": 0.0, "mode": "idle", "events": events}
+            self._poly_smooth = _poly_ema(self._poly_smooth, self._poly, self.p.poly_smooth_alpha)
+            return {
+                "points": [(float(x), float(y)) for x, y in self._poly_smooth],
+                "confidence": 0.0,
+                "mode": "idle",
+                "events": events,
+            }
 
         p0_good, p1_good = _forward_backward_filter(self._prev_gray, gray, self._prev_pts, self.p)
         valid = int(p1_good.shape[0])
         total = max(1, int(self._prev_pts.shape[0]))
         conf = float(valid) / float(total)
 
+        # Lost / recovered events
         if conf < self.p.low_conf_thresh and not self._was_low:
             events.append("TRACKING_LOW_CONFIDENCE")
             self._was_low = True
@@ -417,17 +425,22 @@ class LKTracker:
 
         if valid < 6:
             events.append("TOO_FEW_VALID_PTS")
-            # Big-jump recovery first, else reseed
             recovered = self._attempt_recovery(gray, events)
             if not recovered:
                 self._reseed(gray, events)
             self._prev_gray = gray
-            return {"points": [(float(x), float(y)) for x, y in self._poly], "confidence": min(conf, 0.2), "mode": mode, "events": events}
+            self._poly_smooth = _poly_ema(self._poly_smooth, self._poly, self.p.poly_smooth_alpha)
+            return {
+                "points": [(float(x), float(y)) for x, y in self._poly_smooth],
+                "confidence": min(conf, 0.2),
+                "mode": mode,
+                "events": events,
+            }
 
         src = p0_good[:, 0, :]
         dst = p1_good[:, 0, :]
 
-        # Remove crazy jumps before model fit
+        # Filter absurd point jumps before fitting model
         d = dst - src
         mag = np.linalg.norm(d, axis=1)
         keep = mag < self.p.max_step_px
@@ -435,7 +448,6 @@ class LKTracker:
         dst = dst[keep]
 
         applied_affine = False
-        inlier_count = 0
 
         if src.shape[0] >= 6:
             M, inliers = cv2.estimateAffinePartial2D(
@@ -443,14 +455,31 @@ class LKTracker:
                 method=cv2.RANSAC,
                 ransacReprojThreshold=self.p.ransac_thresh,
                 confidence=0.99,
-                maxIters=2000
+                maxIters=2000,
             )
+
             if M is not None and inliers is not None:
                 inlier_count = int(inliers.sum())
                 if inlier_count >= self.p.min_inliers:
+                    # Refine affine with least-squares on inliers (more precise)
+                    inl = inliers.ravel().astype(bool)
+                    # Refine affine with least-squares on inliers (more precise)
+                    try:
+                        M_refined, _ = cv2.estimateAffinePartial2D(src[inl], dst[inl])
+                        if M_refined is not None:
+                            M = M_refined
+                    except cv2.error:
+                        # If this OpenCV build is picky, just keep the RANSAC result
+                        pass
+
+                    if M_refined is not None:
+                        M = M_refined
+
                     M = M.astype(np.float32)
+                    M = _clamp_affine_translation(M, self.p.max_affine_translation_px)
                     M = _blend_affine(self._M_smooth, M, self.p.smooth_affine_alpha)
                     self._M_smooth = M
+
                     self._poly = _apply_affine_to_poly(self._poly, M)
                     mode = "affine"
                     events.append("AFFINE_RANSAC")
@@ -467,7 +496,6 @@ class LKTracker:
             self._poly[:, 1] += dy
             events.append("FALLBACK_TRANSLATION")
 
-            # If we had to fallback (often means a jump), try recovery
             if self.p.attempt_recovery_on_fallback:
                 self._attempt_recovery(gray, events)
 
@@ -479,19 +507,22 @@ class LKTracker:
 
         self._prev_gray = gray
 
-        # Refresh template when stable
+        # Template refresh when stable
         self._maybe_update_template(gray, conf, mode, events)
 
-        # Out-of-frame
+        # Smooth polygon output (final)
+        self._poly_smooth = _poly_ema(self._poly_smooth, self._poly, self.p.poly_smooth_alpha)
+
+        # Out-of-frame event
         h, w = gray.shape[:2]
         if (
-            np.any(self._poly[:, 0] < 0) or np.any(self._poly[:, 0] > (w - 1)) or
-            np.any(self._poly[:, 1] < 0) or np.any(self._poly[:, 1] > (h - 1))
+            np.any(self._poly_smooth[:, 0] < 0) or np.any(self._poly_smooth[:, 0] > (w - 1)) or
+            np.any(self._poly_smooth[:, 1] < 0) or np.any(self._poly_smooth[:, 1] > (h - 1))
         ):
             events.append("OUT_OF_FRAME")
 
         return {
-            "points": [(float(x), float(y)) for x, y in self._poly],
+            "points": [(float(x), float(y)) for x, y in self._poly_smooth],
             "confidence": float(max(0.0, min(1.0, conf))),
             "mode": mode,
             "events": events,
