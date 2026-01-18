@@ -1,85 +1,88 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
-        <title>FocusPoint — Polygon Demo</title>
-        <link rel="stylesheet" href="style.css">
-    </head>
-    <body>
-        <div id="app">
-            <header id="header" style="margin-bottom: 2%;">
-                <div class="header-left">
-                    <div class="title">FocusPoint</div>
-                    <div class="subtitle">Draw a polygon, track it, export frame
-                        coords — demo UI</div>
-                </div>
-                <div class="header-controls">
-                    <button id="modeToggle">Mode: Draw</button>
-                    <button id="loopToggle">Loop: On</button>
-                </div>
-            </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FocusPoint — Polygon Demo</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
 
-            <div id="layout">
-                <aside id="sidebar" class="card">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <h3>Controls</h3>
-                        <div class="sidebar-header"><button id="collapseBtn"
-                                title="Collapse sidebar">⟨</button></div>
-
-                    </div>
-
-                    <div class="control-row"><label>Upload video</label><input
-                            id="fileInput" type="file" accept="video/*"></div>
-                    <div class="control-row"><label>Stream URL</label><input
-                            id="streamUrl" type="text"
-                            placeholder="http://.../mjpeg or video url"></div>
-                    <div class="control-row"><button id="setStream">Set
-                            Stream</button></div>
-
-                    <!-- mode and loop moved to header -->
-
-                    <div class="control-row buttons">
-                        <button id="finalizeBtn">Finalize (Enter)</button>
-                        <button id="undoBtn">Undo (Backspace)</button>
-                        <button id="clearBtn">Clear (Esc)</button>
-                    </div>
-
-                    <div class="control-row buttons">
-                        <button id="startTrackBtn" class="primary">Start Demo
-                            Tracking</button>
-                        <button id="saveBtn" class="primary">Save
-                            Polygon</button>
-                    </div>
-
-                    <div class="summary-block">
-                        <h4>Session Summary</h4>
-                        <div id="summaryText">No summary yet.</div>
-                    </div>
-
-                    <!-- <h4>Palette</h4>
-        <div id="palette">
-          <div class="swatch" style="background:#edba97">#edba97</div>
-          <div class="swatch" style="background:#e17426">#e17426</div>
-          <div class="swatch" style="background:#701b15">#701b15</div>
-          <div class="swatch" style="background:rgb(164,192,193)">#a4c0c1</div>
-          <div class="swatch" style="background:#0a4152">#0a4152</div>
-        </div> -->
-                </aside>
-
-                <main id="main" class="card" style="width: 100%;">
-                    <div id="videoContainer">
-                        <video id="video" controls
-                            crossorigin="anonymous"></video>
-                        <canvas id="overlay"></canvas>
-                    </div>
-                    <div id="info">Click to add vertices. Right-click a point to
-                        delete it. Press Enter to finalize. Toggle mode to view
-                        only.</div>
-                </main>
-            </div>
+  <body>
+    <div id="app">
+      <header id="header">
+        <div class="header-left">
+          <div class="title">FocusPoint</div>
+          <div class="subtitle">Draw a polygon, track it, export frame coords — demo UI</div>
         </div>
+        <div class="header-controls">
+          <button id="modeToggle" class="pill">Mode: View</button>
+          <button id="loopToggle" class="pill">Loop: On</button>
+        </div>
+      </header>
 
-        <script src="app.js"></script>
-    </body>
+      <div id="layout">
+        <aside id="sidebar" class="card">
+          <div class="sidebar-top">
+            <h3>Controls</h3>
+            <button id="collapseBtn" class="icon-btn" title="Hide panel">⟨</button>
+          </div>
+
+          <div class="control-row">
+            <label>Upload video</label>
+            <input id="fileInput" type="file" accept="video/*" />
+          </div>
+
+          <div class="control-row">
+            <label>Stream URL</label>
+            <input id="streamUrl" type="text" placeholder="http://.../mjpeg or video url" />
+          </div>
+
+          <div class="control-row">
+            <button id="setStream">Set Stream</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <!-- NEW: gate annotation -->
+          <div class="control-row">
+            <button id="startAnnotBtn" class="primary">Start Annotation</button>
+            <div class="hint">
+              Click 3 points to create a closed polygon. Drag points to adjust.
+            </div>
+          </div>
+
+          <div class="control-row buttons">
+            <button id="undoBtn">Undo</button>
+            <button id="clearBtn">Clear</button>
+          </div>
+
+          <div class="control-row buttons">
+            <button id="startTrackBtn" class="primary">Start Demo Tracking</button>
+            <button id="saveBtn" class="primary">Save Polygon</button>
+          </div>
+
+          <div class="summary-block">
+            <h4>Session Summary</h4>
+            <div id="summaryText">No summary yet.</div>
+          </div>
+        </aside>
+
+        <main id="main" class="card">
+          <div id="videoContainer">
+            <video id="video" controls crossorigin="anonymous"></video>
+            <canvas id="overlay"></canvas>
+
+            <!-- NEW: shown when sidebar is hidden -->
+            <button id="sidebarOpenBtn" class="sidebar-open" title="Show panel">☰</button>
+          </div>
+
+          <div id="info">
+            Load a video → click “Start Annotation” → place 3 points → adjust → start tracking.
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
 </html>
