@@ -1,0 +1,45 @@
+:root{
+	--c1: #edba97; /* light peach */
+	--c2: #e17426; /* orange */
+	--c3: #701b15; /* dark red */
+	--c4: rgb(164,192,193); /* muted teal */
+	--c5: #0a4152; /* dark teal */
+	--bg-a: linear-gradient(180deg, #071421 0%, #071827 70%);
+	--card: rgba(10,65,82,0.86);
+}
+*{box-sizing:border-box}
+html,body,#app{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+body{background:var(--bg-a);color:var(--c4);padding:28px}
+#app{max-width:1200px;margin:0 auto}
+#layout{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start}
+#header{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.title{font-size:22px;color:var(--c1);font-weight:700}
+.subtitle{font-size:13px;color:var(--c4);opacity:0.95}
+#sidebar{padding:16px}
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:12px;border:1px solid rgba(255,255,255,0.03);box-shadow:0 6px 18px rgba(10,16,22,0.4)}
+#controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+#controls label{font-size:13px;color:var(--c4)}
+button{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--c1);padding:8px 10px;border-radius:8px;cursor:pointer;transition:all 180ms ease}
+button:hover{transform:translateY(-2px);background:rgba(255,255,255,0.02)}
+button.primary{background:var(--c2);color:#071421;border:0;box-shadow:0 6px 18px rgba(225,116,38,0.12)}
+#videoContainer{position:relative;background:#000;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.03)}
+video{display:block;max-width:100%;height:auto;width:100%;background:#000}
+canvas#overlay{position:absolute;left:0;top:0;pointer-events:auto}
+#info{margin-top:12px;color:var(--c4);font-size:13px}
+
+#sidebar h3{margin:0 0 8px 0;color:var(--c1)}
+.control-row{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.control-row.buttons{flex-direction:row;gap:8px}
+input[type="text"], input[type="file"]{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:8px;border-radius:8px;color:var(--c4)}
+#palette{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.swatch{padding:8px 10px;border-radius:6px;color:#071421;font-weight:600;border:1px solid rgba(0,0,0,0.08)}
+
+/* small screens: stack layout */
+@media (max-width:880px){
+	#layout{grid-template-columns:1fr;}
+	#sidebar{order:2}
+	#main{order:1}
+}
+
+/* small screens */
+@media (max-width:600px){#controls{gap:6px;font-size:13px}button{padding:6px 8px}}
