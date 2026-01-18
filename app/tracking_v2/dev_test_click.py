@@ -57,7 +57,9 @@ def make_writer(out_path, fps, w, h):
 
 # TODO: update path
 def main():
-    video_path = r"C:\Users\jocel\OneDrive\Desktop\Holoray_Dataset\Echo\echo1.mp4"
+    # video_path = r"C:\Users\jocel\OneDrive\Desktop\Holoray_Dataset\Echo\echo4.mp4"
+    # video_path = r"C:\Users\jocel\OneDrive\Desktop\Holoray_Dataset\Intrapartum\Intrapartum-occlusions.mp4"
+    video_path = r"C:\Users\jocel\OneDrive\Desktop\Holoray_Dataset\Lapchole\Lapchole1.mp4"
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
