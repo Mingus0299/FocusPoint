@@ -47,10 +47,9 @@ let trackingMeta = null;
 let wsKeepAlive = null;
 let lastSummary = null;
 let currentVideo = { kind: 'none', id: null, url: null };
-let defaultPlaybackRate = 1;
-let lastUpdateAt = null;
-let updateFpsEma = null;
-const updateFpsAlpha = 0.2;
+let lastFrameAt = null;
+let lastFramePoints = null;
+const leadSeconds = 0.05;
 
 /* ========= Helpers ========= */
 function getVideoContainer() {
@@ -183,38 +182,14 @@ function resetForNewVideo(){
   trackingMeta = null;
   lastSummary = null;
   currentVideo = { kind: 'none', id: null, url: null };
-  lastUpdateAt = null;
-  updateFpsEma = null;
-  if(video) video.playbackRate = defaultPlaybackRate;
+  lastFrameAt = null;
+  lastFramePoints = null;
 }
 
 function setVideoSource(url){
   video.src = url;
   video.loop = true;
   video.play().catch(()=>{});
-  if(video) defaultPlaybackRate = video.playbackRate || 1;
-}
-
-function syncPlaybackRate(sessionData){
-  if(!sessionData || !sessionData.video) return;
-  const srcFps = Number(sessionData.video.fps || 0);
-  const targetFps = Number(sessionData.fps_target || 0);
-  if(!srcFps || !targetFps) return;
-
-  const rawRate = targetFps / srcFps;
-  const rate = Math.max(0.1, Math.min(4, rawRate));
-  video.playbackRate = rate;
-}
-
-function updatePlaybackRateFromTracking(){
-  if(!sessionVideo || !sessionVideo.fps) return;
-  if(video.paused) return;
-  if(updateFpsEma == null) return;
-
-  const rawRate = updateFpsEma / sessionVideo.fps;
-  const rate = Math.max(0.1, Math.min(4, rawRate));
-  const blended = (0.8 * video.playbackRate) + (0.2 * rate);
-  video.playbackRate = blended;
 }
 
 function toCanvasCoords(evt) {
@@ -354,7 +329,23 @@ function connectWebSocket(wsPath, baseUrl){
     try { payload = JSON.parse(event.data); } catch { return; }
     if(!payload || !payload.points) return;
 
-    points = fromFramePoints(payload.points);
+    const rawPoints = fromFramePoints(payload.points);
+    const now = performance.now();
+    let displayPoints = rawPoints;
+
+    if(!video.paused && lastFramePoints && lastFramePoints.length === rawPoints.length && lastFrameAt){
+      const dt = (now - lastFrameAt) / 1000;
+      if(dt > 0){
+        displayPoints = rawPoints.map((p, i)=>{
+          const prev = lastFramePoints[i];
+          const vx = (p.x - prev.x) / dt;
+          const vy = (p.y - prev.y) / dt;
+          return { x: p.x + vx * leadSeconds, y: p.y + vy * leadSeconds };
+        });
+      }
+    }
+
+    points = displayPoints;
     closed = true;
 
     trackingMeta = {
@@ -362,17 +353,8 @@ function connectWebSocket(wsPath, baseUrl){
       mode: payload.mode,
       events: payload.events || []
     };
-
-    const now = performance.now();
-    if(lastUpdateAt){
-      const dt = (now - lastUpdateAt) / 1000;
-      if(dt > 0){
-        const fps = 1 / dt;
-        updateFpsEma = updateFpsEma == null ? fps : (updateFpsAlpha * fps + (1 - updateFpsAlpha) * updateFpsEma);
-        updatePlaybackRateFromTracking();
-      }
-    }
-    lastUpdateAt = now;
+    lastFrameAt = now;
+    lastFramePoints = rawPoints;
 
     setInfo(`mode: ${payload.mode || 'flow'} | conf: ${Math.round((payload.confidence || 0) * 100)}%`);
     draw();
@@ -612,8 +594,8 @@ async function startTracking(){
     startTrackBtn.textContent = 'Start Demo Tracking';
     trackingMeta = null;
     lastSummary = null;
-    lastUpdateAt = null;
-    updateFpsEma = null;
+    lastFrameAt = null;
+    lastFramePoints = null;
 
     if(socket){
       socket.close();
@@ -644,7 +626,6 @@ async function startTracking(){
     annotationActive = false;
 
     setInfo('Tracking stopped.');
-    video.playbackRate = defaultPlaybackRate;
     draw();
     return;
   }
@@ -677,10 +658,9 @@ async function startTracking(){
   sessionId = sessionData.session_id;
   sessionVideo = sessionData.video;
   lastSummary = null;
-  lastUpdateAt = null;
-  updateFpsEma = null;
+  lastFrameAt = null;
+  lastFramePoints = null;
   renderSummary(null);
-  syncPlaybackRate(sessionData);
 
   socket = connectWebSocket(sessionData.ws_url, apiBase);
 
